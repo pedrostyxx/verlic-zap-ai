@@ -95,45 +95,46 @@ async function findAuthorizedNumber(instanceId: string, phoneNumber: string) {
   return authorized
 }
 
-interface WebhookMessage {
-  key: {
-    remoteJid: string
-    fromMe: boolean
-    id: string
+// Interfaces flexíveis para o webhook da Evolution API v2
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+interface WebhookData {
+  key?: {
+    remoteJid?: string
+    fromMe?: boolean
+    id?: string
+    participant?: string
   }
   message?: {
     conversation?: string
-    extendedTextMessage?: {
-      text: string
-    }
+    extendedTextMessage?: { text?: string }
+    imageMessage?: { caption?: string }
+    videoMessage?: { caption?: string }
+    documentMessage?: { caption?: string }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    [key: string]: any
   }
-  messageTimestamp?: number
+  participant?: string
+  pushName?: string
+  state?: string
+  qrcode?: { base64?: string }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  [key: string]: any
 }
 
 interface WebhookPayload {
   event: string
   instance: string
-  data?: {
-    key?: {
-      remoteJid: string
-      fromMe: boolean
-    }
-    message?: {
-      conversation?: string
-      extendedTextMessage?: {
-        text: string
-      }
-    }
-    state?: string
-    qrcode?: {
-      base64: string
-    }
-  }
+  data?: WebhookData
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  [key: string]: any
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const payload: WebhookPayload = await request.json()
+    const payload = await request.json()
+    
+    // Log completo do payload para debug
+    console.log('[Webhook] Payload recebido:', JSON.stringify(payload, null, 2))
     
     await recordMetric('webhook_received', 1, { event: payload.event })
 
@@ -163,7 +164,7 @@ export async function POST(request: NextRequest) {
 
       case 'messages.upsert':
       case 'MESSAGES_UPSERT':
-        await handleIncomingMessage(instance, payload.data)
+        await handleIncomingMessage(instance, payload.data, payload)
         break
     }
 
@@ -211,44 +212,93 @@ async function handleQRCodeUpdate(instanceId: string, qrCode?: string) {
   })
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function handleIncomingMessage(
   instance: { id: string; instanceName: string },
-  data?: WebhookPayload['data']
+  data?: WebhookPayload['data'],
+  fullPayload?: any
 ) {
-  if (!data?.key || !data.message) return
-
-  const remoteJid = data.key.remoteJid
-  const fromMe = data.key.fromMe
-
-  // Ignorar mensagens enviadas por nós
-  if (fromMe) return
-
-  // Ignorar grupos
-  if (remoteJid.includes('@g.us')) return
+  // Log para debug - ver estrutura completa
+  console.log('[Webhook] Data recebida:', JSON.stringify(data, null, 2))
   
-  // Ignorar JIDs do tipo @lid (são IDs internos, não números reais)
-  if (remoteJid.includes('@lid')) {
-    console.log('[Webhook] Ignorando JID interno:', remoteJid)
+  if (!data) return
+
+  // A Evolution API v2 pode enviar a mensagem em diferentes estruturas
+  // Vamos tentar extrair de várias formas
+  
+  // Tentar extrair key e message de diferentes locais
+  const key = data.key
+  const message = data.message
+  
+  // Verificar se é mensagem válida
+  if (!key || !message) {
+    console.log('[Webhook] Estrutura de mensagem inválida')
     return
   }
 
-  // Extrair número de telefone do JID
-  // Formatos possíveis: 5511999999999@s.whatsapp.net, 5511999999999@c.us
-  const phoneNumber = extractPhoneNumber(remoteJid)
+  const remoteJid = key.remoteJid
+  const fromMe = key.fromMe
+
+  // Ignorar mensagens enviadas por nós
+  if (fromMe) {
+    console.log('[Webhook] Ignorando mensagem própria')
+    return
+  }
+
+  // Ignorar grupos
+  if (remoteJid?.includes('@g.us')) {
+    console.log('[Webhook] Ignorando grupo:', remoteJid)
+    return
+  }
+
+  // Extrair número de telefone
+  // Na Evolution v2, o número pode estar em:
+  // 1. remoteJid (5511999999999@s.whatsapp.net)
+  // 2. data.pushName pode ter o nome do contato
+  // 3. Para @lid, precisamos buscar o número real em outro lugar
+  
+  let phoneNumber: string | null = null
+  
+  // Se remoteJid é um @lid, não temos o número neste campo
+  // O @lid é um ID interno do WhatsApp, não um número de telefone
+  if (remoteJid?.includes('@lid')) {
+    // Tentar buscar número em campos alternativos do payload
+    // A Evolution às vezes inclui participant ou outras informações
+    const participant = key.participant || data.participant
+    if (participant) {
+      phoneNumber = extractPhoneNumber(participant)
+    }
+    
+    // Se ainda não encontrou, buscar no pushName não ajuda pois é só nome
+    if (!phoneNumber) {
+      console.log('[Webhook] Mensagem com @lid sem número real:', remoteJid)
+      console.log('[Webhook] Payload completo para análise:', JSON.stringify(fullPayload, null, 2))
+      return
+    }
+  } else if (remoteJid) {
+    phoneNumber = extractPhoneNumber(remoteJid)
+  }
   
   if (!phoneNumber) {
     console.log('[Webhook] Não foi possível extrair número de:', remoteJid)
     return
   }
 
-  // Extrair conteúdo da mensagem
-  const messageContent = data.message.conversation || 
-    data.message.extendedTextMessage?.text || 
+  // Extrair conteúdo da mensagem - suportar múltiplos formatos
+  const messageContent = 
+    message.conversation || 
+    message.extendedTextMessage?.text ||
+    message.imageMessage?.caption ||
+    message.videoMessage?.caption ||
+    message.documentMessage?.caption ||
     ''
 
-  if (!messageContent) return
+  if (!messageContent) {
+    console.log('[Webhook] Mensagem sem conteúdo de texto')
+    return
+  }
 
-  console.log('[Webhook] Mensagem recebida de:', phoneNumber, '-', messageContent.substring(0, 50))
+  console.log('[Webhook] ✓ Mensagem recebida de:', phoneNumber, '-', messageContent.substring(0, 50))
 
   // Verificar se número está autorizado (buscar com diferentes formatos)
   const authorizedNumber = await findAuthorizedNumber(instance.id, phoneNumber)
@@ -269,11 +319,11 @@ async function handleIncomingMessage(
 
   // Se não autorizado, ignorar
   if (!authorizedNumber) {
-    console.log('[Webhook] Número não autorizado:', phoneNumber)
+    console.log('[Webhook] ✗ Número não autorizado:', phoneNumber)
     return
   }
 
-  console.log('[Webhook] Número autorizado, gerando resposta...')
+  console.log('[Webhook] ✓ Número autorizado, gerando resposta...')
 
   // Gerar resposta com IA se configurado
   if (!isDeepSeekConfigured()) {
