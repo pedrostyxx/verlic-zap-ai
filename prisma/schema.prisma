@@ -2,12 +2,12 @@
 // Sistema de WhatsApp AI com DeepSeek
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 // Usuários do sistema (admin)
