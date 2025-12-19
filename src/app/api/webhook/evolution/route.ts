@@ -221,30 +221,34 @@ async function handleIncomingMessage(
   // Log para debug - ver estrutura completa
   console.log('[Webhook] Full Payload:', JSON.stringify(fullPayload, null, 2))
   
-  // A Evolution API pode enviar o payload em diferentes estruturas:
-  // Estrutura 1 (nova): { event, instance, remoteJid, from, message }
-  // Estrutura 2 (antiga): { event, instance, data: { key: { remoteJid }, message } }
+  // A Evolution API envia o número real no campo "sender" quando o remoteJid é @lid
+  // Estrutura: { sender: "5511999999999@s.whatsapp.net", data: { key: { remoteJid: "@lid" }, message } }
   
   // Tentar extrair número de telefone de múltiplos lugares
   let phoneNumber: string | null = null
   let messageContent: string | null = null
   let fromMe = false
   
-  // Primeiro, verificar estrutura nova (campos no nível raiz)
-  if (fullPayload?.from) {
-    // Campo 'from' contém apenas o número
+  // IMPORTANTE: O campo "sender" contém o número real quando remoteJid é @lid
+  if (fullPayload?.sender) {
+    phoneNumber = extractPhoneNumber(fullPayload.sender)
+    console.log('[Webhook] Número extraído de "sender":', phoneNumber)
+  }
+  
+  // Se não encontrou em 'sender', tentar 'from'
+  if (!phoneNumber && fullPayload?.from) {
     phoneNumber = extractPhoneNumber(fullPayload.from)
     console.log('[Webhook] Número extraído de "from":', phoneNumber)
   }
   
-  // Se não encontrou em 'from', tentar 'remoteJid' no nível raiz
-  if (!phoneNumber && fullPayload?.remoteJid) {
+  // Se não encontrou, tentar 'remoteJid' no nível raiz (se não for @lid)
+  if (!phoneNumber && fullPayload?.remoteJid && !fullPayload.remoteJid.includes('@lid')) {
     phoneNumber = extractPhoneNumber(fullPayload.remoteJid)
     console.log('[Webhook] Número extraído de "remoteJid" (raiz):', phoneNumber)
   }
   
-  // Se não encontrou, tentar estrutura antiga (dentro de data.key)
-  if (!phoneNumber && data?.key?.remoteJid) {
+  // Se não encontrou, tentar estrutura antiga (dentro de data.key) - se não for @lid
+  if (!phoneNumber && data?.key?.remoteJid && !data.key.remoteJid.includes('@lid')) {
     phoneNumber = extractPhoneNumber(data.key.remoteJid)
     console.log('[Webhook] Número extraído de "data.key.remoteJid":', phoneNumber)
   }
