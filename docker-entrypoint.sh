@@ -2,7 +2,7 @@
 set -e
 
 echo "Running database migrations..."
-node node_modules/prisma/build/index.js db push
+prisma db push
 
 echo "Starting server..."
 exec node server.js
