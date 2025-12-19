@@ -218,170 +218,178 @@ async function handleIncomingMessage(
   data?: WebhookPayload['data'],
   fullPayload?: any
 ) {
-  // Log para debug - ver estrutura completa
-  console.log('[Webhook] Full Payload:', JSON.stringify(fullPayload, null, 2))
+  console.log('='.repeat(60))
+  console.log('[Webhook] PROCESSANDO MENSAGEM')
+  console.log('='.repeat(60))
   
-  // A Evolution API envia o número real no campo "sender" quando o remoteJid é @lid
-  // Estrutura: { sender: "5511999999999@s.whatsapp.net", data: { key: { remoteJid: "@lid" }, message } }
+  // O número real está no campo "sender" do payload
+  // Exemplo: "sender": "5511961112057@s.whatsapp.net"
+  const senderJid = fullPayload?.sender
   
-  // Tentar extrair número de telefone de múltiplos lugares
-  let phoneNumber: string | null = null
-  let messageContent: string | null = null
-  let fromMe = false
-  
-  // IMPORTANTE: O campo "sender" contém o número real quando remoteJid é @lid
-  if (fullPayload?.sender) {
-    phoneNumber = extractPhoneNumber(fullPayload.sender)
-    console.log('[Webhook] Número extraído de "sender":', phoneNumber)
+  if (!senderJid) {
+    console.log('[Webhook] ✗ Campo "sender" não encontrado no payload')
+    return
   }
   
-  // Se não encontrou em 'sender', tentar 'from'
-  if (!phoneNumber && fullPayload?.from) {
-    phoneNumber = extractPhoneNumber(fullPayload.from)
-    console.log('[Webhook] Número extraído de "from":', phoneNumber)
+  // Extrair número do sender
+  const phoneNumber = extractPhoneNumber(senderJid)
+  console.log('[Webhook] Sender JID:', senderJid)
+  console.log('[Webhook] Número extraído:', phoneNumber)
+  
+  if (!phoneNumber) {
+    console.log('[Webhook] ✗ Não foi possível extrair número do sender')
+    return
   }
   
-  // Se não encontrou, tentar 'remoteJid' no nível raiz (se não for @lid)
-  if (!phoneNumber && fullPayload?.remoteJid && !fullPayload.remoteJid.includes('@lid')) {
-    phoneNumber = extractPhoneNumber(fullPayload.remoteJid)
-    console.log('[Webhook] Número extraído de "remoteJid" (raiz):', phoneNumber)
-  }
-  
-  // Se não encontrou, tentar estrutura antiga (dentro de data.key) - se não for @lid
-  if (!phoneNumber && data?.key?.remoteJid && !data.key.remoteJid.includes('@lid')) {
-    phoneNumber = extractPhoneNumber(data.key.remoteJid)
-    console.log('[Webhook] Número extraído de "data.key.remoteJid":', phoneNumber)
-  }
-  
-  // Verificar se é mensagem própria
-  fromMe = fullPayload?.fromMe === true || data?.key?.fromMe === true
-  
+  // Verificar se é mensagem própria (fromMe)
+  const fromMe = data?.key?.fromMe === true
   if (fromMe) {
-    console.log('[Webhook] Ignorando mensagem própria')
+    console.log('[Webhook] ✗ Ignorando mensagem própria (fromMe=true)')
     return
   }
   
   // Ignorar grupos
-  const jidToCheck = fullPayload?.remoteJid || data?.key?.remoteJid || ''
-  if (jidToCheck.includes('@g.us')) {
-    console.log('[Webhook] Ignorando grupo:', jidToCheck)
+  const remoteJid = data?.key?.remoteJid || ''
+  if (remoteJid.includes('@g.us')) {
+    console.log('[Webhook] ✗ Ignorando grupo:', remoteJid)
     return
   }
   
-  // Ignorar @lid sem número válido
-  if (jidToCheck.includes('@lid') && !phoneNumber) {
-    console.log('[Webhook] Ignorando @lid sem número:', jidToCheck)
-    return
-  }
-  
-  if (!phoneNumber) {
-    console.log('[Webhook] Não foi possível extrair número do payload')
-    return
-  }
-  
-  // Extrair conteúdo da mensagem de múltiplos lugares
-  // Estrutura nova: message.body ou message.text
-  // Estrutura antiga: data.message.conversation ou data.message.extendedTextMessage.text
-  
-  const msg = fullPayload?.message || data?.message
-  if (msg) {
-    messageContent = 
-      msg.body ||
-      msg.text ||
-      msg.conversation ||
-      msg.extendedTextMessage?.text ||
-      msg.imageMessage?.caption ||
-      msg.videoMessage?.caption ||
-      msg.documentMessage?.caption ||
-      null
-  }
+  // Extrair conteúdo da mensagem
+  const msg = data?.message
+  const messageContent = 
+    msg?.conversation ||
+    msg?.extendedTextMessage?.text ||
+    msg?.imageMessage?.caption ||
+    msg?.videoMessage?.caption ||
+    msg?.documentMessage?.caption ||
+    null
+    
+  console.log('[Webhook] Tipo mensagem:', data?.messageType)
+  console.log('[Webhook] Conteúdo:', messageContent?.substring(0, 100))
   
   if (!messageContent) {
-    console.log('[Webhook] Mensagem sem conteúdo de texto')
+    console.log('[Webhook] ✗ Mensagem sem conteúdo de texto')
     return
   }
-
-  console.log('[Webhook] ✓ Mensagem de:', phoneNumber, '-', messageContent.substring(0, 50))
-
-  // Verificar se número está autorizado (buscar com diferentes formatos)
+  
+  console.log('[Webhook] ✓ Mensagem recebida de:', phoneNumber, '-', messageContent)
+  
+  // Verificar se número está autorizado
+  console.log('[Webhook] Verificando autorização para:', phoneNumber, 'na instância:', instance.id)
   const authorizedNumber = await findAuthorizedNumber(instance.id, phoneNumber)
-
+  console.log('[Webhook] Autorizado:', authorizedNumber ? 'SIM' : 'NÃO')
+  
   // Salvar mensagem recebida
-  await prisma.message.create({
-    data: {
-      instanceId: instance.id,
-      phoneNumber,
-      direction: 'inbound',
-      content: messageContent,
-      status: 'received',
-      authorizedNumber: authorizedNumber?.id,
-    },
-  })
-
-  await recordMetric('message_received', 1, { instanceId: instance.id })
-
-  // Se não autorizado, ignorar
-  if (!authorizedNumber) {
-    console.log('[Webhook] ✗ Número não autorizado:', phoneNumber)
-    return
-  }
-
-  console.log('[Webhook] ✓ Número autorizado, gerando resposta...')
-
-  // Gerar resposta com IA se configurado
-  if (!isDeepSeekConfigured()) {
-    console.log('[Webhook] DeepSeek não configurado')
-    return
-  }
-
   try {
+    await prisma.message.create({
+      data: {
+        instanceId: instance.id,
+        phoneNumber,
+        direction: 'inbound',
+        content: messageContent,
+        status: 'received',
+        authorizedNumber: authorizedNumber?.id,
+      },
+    })
+    console.log('[Webhook] ✓ Mensagem salva no banco')
+  } catch (err) {
+    console.error('[Webhook] ✗ Erro ao salvar mensagem:', err)
+  }
+  
+  await recordMetric('message_received', 1, { instanceId: instance.id })
+  
+  // Se não autorizado, parar aqui
+  if (!authorizedNumber) {
+    console.log('[Webhook] ✗ PARANDO: Número não autorizado:', phoneNumber)
+    console.log('[Webhook] Dica: Adicione o número', phoneNumber, 'como autorizado no dashboard')
+    return
+  }
+  
+  console.log('[Webhook] ✓ Número autorizado! Gerando resposta IA...')
+  
+  // Verificar se DeepSeek está configurado
+  const deepseekConfigured = isDeepSeekConfigured()
+  console.log('[Webhook] DeepSeek configurado:', deepseekConfigured)
+  console.log('[Webhook] DEEPSEEK_API_KEY presente:', !!process.env.DEEPSEEK_API_KEY)
+  
+  if (!deepseekConfigured) {
+    console.log('[Webhook] ✗ PARANDO: DeepSeek não configurado')
+    return
+  }
+  
+  // Gerar resposta com IA
+  try {
+    console.log('[Webhook] Chamando DeepSeek API...')
     const startTime = Date.now()
+    
     const aiResponse = await generateResponse(
       messageContent,
       phoneNumber,
       instance.id
     )
-
+    
+    console.log('[Webhook] Resposta DeepSeek:', aiResponse ? 'RECEBIDA' : 'VAZIA')
+    
     if (!aiResponse) {
-      console.log('[Webhook] Sem resposta da IA')
+      console.log('[Webhook] ✗ DeepSeek não retornou resposta')
       return
     }
-
+    
+    console.log('[Webhook] ✓ Resposta IA:', aiResponse.content.substring(0, 100))
+    console.log('[Webhook] Tokens usados:', aiResponse.tokensUsed)
+    console.log('[Webhook] Tempo resposta:', aiResponse.responseTime, 'ms')
+    
     await recordMetric('ai_request', 1, {
       instanceId: instance.id,
       tokensUsed: aiResponse.tokensUsed,
       responseTime: aiResponse.responseTime,
     })
-
+    
     // Enviar resposta via Evolution
-    if (isEvolutionConfigured()) {
-      const sent = await sendTextMessage(
-        instance.instanceName,
-        phoneNumber,
-        aiResponse.content
-      )
-
-      if (sent) {
-        // Salvar mensagem enviada
-        await prisma.message.create({
-          data: {
-            instanceId: instance.id,
-            phoneNumber,
-            direction: 'outbound',
-            content: aiResponse.content,
-            status: 'sent',
-            aiGenerated: true,
-            tokensUsed: aiResponse.tokensUsed,
-            responseTime: aiResponse.responseTime,
-            authorizedNumber: authorizedNumber.id,
-          },
-        })
-
-        await recordMetric('message_sent', 1, { instanceId: instance.id })
-      }
+    const evolutionConfigured = isEvolutionConfigured()
+    console.log('[Webhook] Evolution configurado:', evolutionConfigured)
+    
+    if (!evolutionConfigured) {
+      console.log('[Webhook] ✗ Evolution não configurado, não pode enviar resposta')
+      return
+    }
+    
+    console.log('[Webhook] Enviando mensagem para:', phoneNumber, 'via instância:', instance.instanceName)
+    
+    const sent = await sendTextMessage(
+      instance.instanceName,
+      phoneNumber,
+      aiResponse.content
+    )
+    
+    console.log('[Webhook] Mensagem enviada:', sent ? 'SIM' : 'NÃO')
+    
+    if (sent) {
+      // Salvar mensagem enviada
+      await prisma.message.create({
+        data: {
+          instanceId: instance.id,
+          phoneNumber,
+          direction: 'outbound',
+          content: aiResponse.content,
+          status: 'sent',
+          aiGenerated: true,
+          tokensUsed: aiResponse.tokensUsed,
+          responseTime: aiResponse.responseTime,
+          authorizedNumber: authorizedNumber.id,
+        },
+      })
+      
+      await recordMetric('message_sent', 1, { instanceId: instance.id })
+      console.log('[Webhook] ✓ SUCESSO! Resposta enviada para', phoneNumber)
+    } else {
+      console.log('[Webhook] ✗ FALHA ao enviar mensagem')
     }
   } catch (error) {
-    console.error('[Webhook] Erro ao processar mensagem:', error)
+    console.error('[Webhook] ✗ ERRO ao processar:', error)
     await recordMetric('error', 1, { source: 'ai_response', error: String(error) })
   }
+  
+  console.log('='.repeat(60))
 }
