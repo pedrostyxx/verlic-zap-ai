@@ -1,0 +1,152 @@
+// Verlic Zap AI - Prisma Schema
+// Sistema de WhatsApp AI com DeepSeek
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Usuários do sistema (admin)
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      String   @default("admin")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sessions Session[]
+
+  @@map("users")
+}
+
+// Sessões de autenticação
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+// Instâncias do WhatsApp (números conectados)
+model WhatsAppInstance {
+  id           String   @id @default(cuid())
+  instanceName String   @unique
+  instanceId   String?
+  phoneNumber  String?
+  status       String   @default("disconnected") // connected, disconnected, connecting
+  qrCode       String?  @db.Text
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  messages          Message[]
+  authorizedNumbers AuthorizedNumber[]
+  conversations     Conversation[]
+
+  @@map("whatsapp_instances")
+}
+
+// Números autorizados a usar o bot
+model AuthorizedNumber {
+  id          String   @id @default(cuid())
+  phoneNumber String
+  name        String?
+  isActive    Boolean  @default(true)
+  instanceId  String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  instance      WhatsAppInstance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  messages      Message[]
+  conversations Conversation[]
+
+  @@unique([phoneNumber, instanceId])
+  @@map("authorized_numbers")
+}
+
+// Conversas (contexto por número)
+model Conversation {
+  id               String   @id @default(cuid())
+  instanceId       String
+  authorizedNumber String
+  context          String   @db.Text // JSON com histórico de mensagens para contexto
+  lastMessageAt    DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  instance         WhatsAppInstance  @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  authorizedNumberRef AuthorizedNumber? @relation(fields: [authorizedNumber], references: [id], onDelete: Cascade)
+
+  @@unique([instanceId, authorizedNumber])
+  @@map("conversations")
+}
+
+// Mensagens recebidas e enviadas
+model Message {
+  id               String   @id @default(cuid())
+  instanceId       String
+  authorizedNumber String?
+  phoneNumber      String
+  direction        String   // inbound, outbound
+  content          String   @db.Text
+  messageType      String   @default("text") // text, image, audio, etc
+  status           String   @default("received") // received, sent, delivered, read, failed
+  aiGenerated      Boolean  @default(false)
+  tokensUsed       Int?
+  responseTime     Int?     // tempo em ms para gerar resposta
+  createdAt        DateTime @default(now())
+
+  instance              WhatsAppInstance  @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  authorizedNumberRef   AuthorizedNumber? @relation(fields: [authorizedNumber], references: [id], onDelete: SetNull)
+
+  @@index([instanceId, createdAt])
+  @@index([phoneNumber])
+  @@map("messages")
+}
+
+// Métricas do sistema
+model SystemMetric {
+  id        String   @id @default(cuid())
+  metricType String  // api_request, ai_request, message_sent, message_received, error
+  value     Int      @default(1)
+  metadata  String?  @db.Text // JSON com dados adicionais
+  createdAt DateTime @default(now())
+
+  @@index([metricType, createdAt])
+  @@map("system_metrics")
+}
+
+// Configurações globais
+model SystemConfig {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("system_configs")
+}
+
+// Status do bot
+model BotStatus {
+  id           String   @id @default(cuid())
+  instanceId   String   @unique
+  isRunning    Boolean  @default(false)
+  lastStarted  DateTime?
+  lastStopped  DateTime?
+  errorMessage String?  @db.Text
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("bot_status")
+}
