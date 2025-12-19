@@ -221,37 +221,48 @@ async function handleIncomingMessage(
   console.log('='.repeat(60))
   console.log('[Webhook] PROCESSANDO MENSAGEM')
   console.log('='.repeat(60))
-  
-  // O número real está no campo "sender" do payload
-  // Exemplo: "sender": "5511961112057@s.whatsapp.net"
-  const senderJid = fullPayload?.sender
-  
-  if (!senderJid) {
-    console.log('[Webhook] ✗ Campo "sender" não encontrado no payload')
-    return
-  }
-  
-  // Extrair número do sender
-  const phoneNumber = extractPhoneNumber(senderJid)
-  console.log('[Webhook] Sender JID:', senderJid)
-  console.log('[Webhook] Número extraído:', phoneNumber)
-  
-  if (!phoneNumber) {
-    console.log('[Webhook] ✗ Não foi possível extrair número do sender')
-    return
-  }
+  console.log('[Webhook] Payload completo:', JSON.stringify(fullPayload, null, 2))
   
   // Verificar se é mensagem própria (fromMe)
+  // Quando fromMe=true, o bot está enviando, não recebendo
   const fromMe = data?.key?.fromMe === true
   if (fromMe) {
     console.log('[Webhook] ✗ Ignorando mensagem própria (fromMe=true)')
     return
   }
   
-  // Ignorar grupos
+  // O remoteJid contém o número de QUEM ENVIOU a mensagem (quando fromMe=false)
+  // Exemplo: "5511999999999@s.whatsapp.net" - este é o número do USUÁRIO
+  // O campo "sender" do payload é o número do BOT, não do usuário!
   const remoteJid = data?.key?.remoteJid || ''
+  
+  console.log('[Webhook] remoteJid (usuário):', remoteJid)
+  console.log('[Webhook] fromMe:', fromMe)
+  console.log('[Webhook] sender (bot):', fullPayload?.sender)
+  
+  // Ignorar grupos
   if (remoteJid.includes('@g.us')) {
     console.log('[Webhook] ✗ Ignorando grupo:', remoteJid)
+    return
+  }
+  
+  // Ignorar LIDs (IDs internos do WhatsApp, não são números reais)
+  if (remoteJid.includes('@lid')) {
+    console.log('[Webhook] ✗ Ignorando LID (ID interno):', remoteJid)
+    // Tentar buscar número alternativo
+    const altJid = data?.key?.participant || fullPayload?.data?.key?.remoteJidAlt
+    if (altJid) {
+      console.log('[Webhook] Tentando remoteJidAlt:', altJid)
+    }
+    return
+  }
+  
+  // Extrair número do remoteJid (número do usuário)
+  const phoneNumber = extractPhoneNumber(remoteJid)
+  console.log('[Webhook] Número extraído do usuário:', phoneNumber)
+  
+  if (!phoneNumber) {
+    console.log('[Webhook] ✗ Não foi possível extrair número do remoteJid')
     return
   }
   
