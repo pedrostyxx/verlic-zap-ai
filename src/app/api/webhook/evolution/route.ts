@@ -219,86 +219,85 @@ async function handleIncomingMessage(
   fullPayload?: any
 ) {
   // Log para debug - ver estrutura completa
-  console.log('[Webhook] Data recebida:', JSON.stringify(data, null, 2))
+  console.log('[Webhook] Full Payload:', JSON.stringify(fullPayload, null, 2))
   
-  if (!data) return
-
-  // A Evolution API v2 pode enviar a mensagem em diferentes estruturas
-  // Vamos tentar extrair de várias formas
+  // A Evolution API pode enviar o payload em diferentes estruturas:
+  // Estrutura 1 (nova): { event, instance, remoteJid, from, message }
+  // Estrutura 2 (antiga): { event, instance, data: { key: { remoteJid }, message } }
   
-  // Tentar extrair key e message de diferentes locais
-  const key = data.key
-  const message = data.message
+  // Tentar extrair número de telefone de múltiplos lugares
+  let phoneNumber: string | null = null
+  let messageContent: string | null = null
+  let fromMe = false
   
-  // Verificar se é mensagem válida
-  if (!key || !message) {
-    console.log('[Webhook] Estrutura de mensagem inválida')
-    return
+  // Primeiro, verificar estrutura nova (campos no nível raiz)
+  if (fullPayload?.from) {
+    // Campo 'from' contém apenas o número
+    phoneNumber = extractPhoneNumber(fullPayload.from)
+    console.log('[Webhook] Número extraído de "from":', phoneNumber)
   }
-
-  const remoteJid = key.remoteJid
-  const fromMe = key.fromMe
-
-  // Ignorar mensagens enviadas por nós
+  
+  // Se não encontrou em 'from', tentar 'remoteJid' no nível raiz
+  if (!phoneNumber && fullPayload?.remoteJid) {
+    phoneNumber = extractPhoneNumber(fullPayload.remoteJid)
+    console.log('[Webhook] Número extraído de "remoteJid" (raiz):', phoneNumber)
+  }
+  
+  // Se não encontrou, tentar estrutura antiga (dentro de data.key)
+  if (!phoneNumber && data?.key?.remoteJid) {
+    phoneNumber = extractPhoneNumber(data.key.remoteJid)
+    console.log('[Webhook] Número extraído de "data.key.remoteJid":', phoneNumber)
+  }
+  
+  // Verificar se é mensagem própria
+  fromMe = fullPayload?.fromMe === true || data?.key?.fromMe === true
+  
   if (fromMe) {
     console.log('[Webhook] Ignorando mensagem própria')
     return
   }
-
+  
   // Ignorar grupos
-  if (remoteJid?.includes('@g.us')) {
-    console.log('[Webhook] Ignorando grupo:', remoteJid)
+  const jidToCheck = fullPayload?.remoteJid || data?.key?.remoteJid || ''
+  if (jidToCheck.includes('@g.us')) {
+    console.log('[Webhook] Ignorando grupo:', jidToCheck)
     return
   }
-
-  // Extrair número de telefone
-  // Na Evolution v2, o número pode estar em:
-  // 1. remoteJid (5511999999999@s.whatsapp.net)
-  // 2. data.pushName pode ter o nome do contato
-  // 3. Para @lid, precisamos buscar o número real em outro lugar
   
-  let phoneNumber: string | null = null
-  
-  // Se remoteJid é um @lid, não temos o número neste campo
-  // O @lid é um ID interno do WhatsApp, não um número de telefone
-  if (remoteJid?.includes('@lid')) {
-    // Tentar buscar número em campos alternativos do payload
-    // A Evolution às vezes inclui participant ou outras informações
-    const participant = key.participant || data.participant
-    if (participant) {
-      phoneNumber = extractPhoneNumber(participant)
-    }
-    
-    // Se ainda não encontrou, buscar no pushName não ajuda pois é só nome
-    if (!phoneNumber) {
-      console.log('[Webhook] Mensagem com @lid sem número real:', remoteJid)
-      console.log('[Webhook] Payload completo para análise:', JSON.stringify(fullPayload, null, 2))
-      return
-    }
-  } else if (remoteJid) {
-    phoneNumber = extractPhoneNumber(remoteJid)
+  // Ignorar @lid sem número válido
+  if (jidToCheck.includes('@lid') && !phoneNumber) {
+    console.log('[Webhook] Ignorando @lid sem número:', jidToCheck)
+    return
   }
   
   if (!phoneNumber) {
-    console.log('[Webhook] Não foi possível extrair número de:', remoteJid)
+    console.log('[Webhook] Não foi possível extrair número do payload')
     return
   }
-
-  // Extrair conteúdo da mensagem - suportar múltiplos formatos
-  const messageContent = 
-    message.conversation || 
-    message.extendedTextMessage?.text ||
-    message.imageMessage?.caption ||
-    message.videoMessage?.caption ||
-    message.documentMessage?.caption ||
-    ''
-
+  
+  // Extrair conteúdo da mensagem de múltiplos lugares
+  // Estrutura nova: message.body ou message.text
+  // Estrutura antiga: data.message.conversation ou data.message.extendedTextMessage.text
+  
+  const msg = fullPayload?.message || data?.message
+  if (msg) {
+    messageContent = 
+      msg.body ||
+      msg.text ||
+      msg.conversation ||
+      msg.extendedTextMessage?.text ||
+      msg.imageMessage?.caption ||
+      msg.videoMessage?.caption ||
+      msg.documentMessage?.caption ||
+      null
+  }
+  
   if (!messageContent) {
     console.log('[Webhook] Mensagem sem conteúdo de texto')
     return
   }
 
-  console.log('[Webhook] ✓ Mensagem recebida de:', phoneNumber, '-', messageContent.substring(0, 50))
+  console.log('[Webhook] ✓ Mensagem de:', phoneNumber, '-', messageContent.substring(0, 50))
 
   // Verificar se número está autorizado (buscar com diferentes formatos)
   const authorizedNumber = await findAuthorizedNumber(instance.id, phoneNumber)
