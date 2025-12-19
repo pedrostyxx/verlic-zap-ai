@@ -137,3 +137,42 @@ export async function isAuthenticated(): Promise<boolean> {
   const session = await getCurrentSession()
   return session !== null
 }
+
+// Verificar autenticação em API routes (via header Authorization ou cookie)
+export async function verifyApiAuth(request: Request): Promise<JWTPayload | null> {
+  // Primeiro tenta pelo header Authorization
+  const authHeader = request.headers.get('Authorization')
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.substring(7)
+    const payload = verifyToken(token)
+    if (payload) {
+      // Verificar se sessão existe
+      const session = await prisma.session.findUnique({
+        where: { token },
+      })
+      if (session && session.expiresAt > new Date()) {
+        return payload
+      }
+    }
+  }
+  
+  // Fallback para cookie
+  const cookieHeader = request.headers.get('cookie')
+  if (cookieHeader) {
+    const sessionMatch = cookieHeader.match(/session=([^;]+)/)
+    if (sessionMatch) {
+      const token = sessionMatch[1]
+      const payload = verifyToken(token)
+      if (payload) {
+        const session = await prisma.session.findUnique({
+          where: { token },
+        })
+        if (session && session.expiresAt > new Date()) {
+          return payload
+        }
+      }
+    }
+  }
+  
+  return null
+}

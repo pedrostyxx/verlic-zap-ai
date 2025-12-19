@@ -130,11 +130,28 @@ interface WebhookPayload {
 }
 
 export async function POST(request: NextRequest) {
+  let webhookLogId: string | null = null
+  
   try {
     const payload = await request.json()
     
     // Log completo do payload para debug
     console.log('[Webhook] Payload recebido:', JSON.stringify(payload, null, 2))
+    
+    // Salvar webhook log no banco para visualização
+    try {
+      const log = await prisma.webhookLog.create({
+        data: {
+          instanceName: payload.instance || null,
+          event: payload.event || 'UNKNOWN',
+          payload: JSON.stringify(payload),
+          processed: false,
+        },
+      })
+      webhookLogId = log.id
+    } catch (logErr) {
+      console.error('[Webhook] Erro ao salvar log:', logErr)
+    }
     
     await recordMetric('webhook_received', 1, { event: payload.event })
 
@@ -147,6 +164,13 @@ export async function POST(request: NextRequest) {
 
     if (!instance) {
       console.log('[Webhook] Instância não encontrada:', instanceName)
+      // Atualizar log como processado
+      if (webhookLogId) {
+        await prisma.webhookLog.update({
+          where: { id: webhookLogId },
+          data: { processed: true, error: 'Instância não encontrada' },
+        })
+      }
       return NextResponse.json({ received: true })
     }
 
@@ -168,10 +192,28 @@ export async function POST(request: NextRequest) {
         break
     }
 
+    // Atualizar log como processado com sucesso
+    if (webhookLogId) {
+      await prisma.webhookLog.update({
+        where: { id: webhookLogId },
+        data: { processed: true },
+      })
+    }
+
     return NextResponse.json({ received: true })
   } catch (error) {
     console.error('[Webhook] Erro:', error)
+    
+    // Atualizar log com erro
+    if (webhookLogId) {
+      await prisma.webhookLog.update({
+        where: { id: webhookLogId },
+        data: { processed: true, error: String(error) },
+      })
+    }
+    
     await recordMetric('error', 1, { source: 'webhook', error: String(error) })
+    return NextResponse.json({ error: 'Erro ao processar webhook' }, { status: 500 })
     return NextResponse.json({ error: 'Erro ao processar webhook' }, { status: 500 })
   }
 }

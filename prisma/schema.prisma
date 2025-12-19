@@ -150,3 +150,18 @@ model BotStatus {
 
   @@map("bot_status")
 }
+
+// Logs de webhooks recebidos (para debug)
+model WebhookLog {
+  id           String   @id @default(cuid())
+  instanceName String?
+  event        String   // MESSAGES_UPSERT, CONNECTION_UPDATE, etc
+  payload      String   @db.Text // JSON completo
+  processed    Boolean  @default(false)
+  error        String?  @db.Text
+  createdAt    DateTime @default(now())
+
+  @@index([instanceName, createdAt])
+  @@index([event, createdAt])
+  @@map("webhook_logs")
+}

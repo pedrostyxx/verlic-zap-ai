@@ -13,6 +13,7 @@ import {
   LogOut,
   Menu,
   X,
+  Webhook,
 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -21,6 +22,7 @@ const navigation = [
   { name: 'Instâncias', href: '/dashboard/instances', icon: Smartphone },
   { name: 'Números Autorizados', href: '/dashboard/authorized', icon: Users },
   { name: 'Mensagens', href: '/dashboard/messages', icon: MessageSquare },
+  { name: 'Webhook Logs', href: '/dashboard/webhooks', icon: Webhook },
   { name: 'Métricas', href: '/dashboard/metrics', icon: BarChart3 },
   { name: 'Configurações', href: '/dashboard/settings', icon: Settings },
 ]
