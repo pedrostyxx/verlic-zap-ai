@@ -56,19 +56,25 @@ export async function getMetricsByDay(metricType: MetricType, days: number = 7) 
   const since = new Date()
   since.setDate(since.getDate() - days)
 
-  const metrics = await prisma.$queryRaw<Array<{ date: Date; total: bigint }>>`
-    SELECT DATE(created_at) as date, SUM(value) as total
-    FROM system_metrics
-    WHERE metric_type = ${metricType}
-    AND created_at >= ${since}
-    GROUP BY DATE(created_at)
-    ORDER BY date ASC
-  `
+  try {
+    // Usar query raw com nomes corretos das colunas (camelCase no Prisma sem @map)
+    const metrics = await prisma.$queryRaw<Array<{ date: Date; total: bigint }>>`
+      SELECT DATE("createdAt") as date, SUM(value) as total
+      FROM system_metrics
+      WHERE "metricType" = ${metricType}
+      AND "createdAt" >= ${since}
+      GROUP BY DATE("createdAt")
+      ORDER BY date ASC
+    `
 
-  return metrics.map(m => ({
-    date: m.date,
-    total: Number(m.total),
-  }))
+    return metrics.map(m => ({
+      date: m.date,
+      total: Number(m.total),
+    }))
+  } catch (error) {
+    console.error('[Metrics] Erro ao obter:', error)
+    return []
+  }
 }
 
 export async function getMessageStats() {

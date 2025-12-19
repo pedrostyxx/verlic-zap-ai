@@ -5,6 +5,96 @@ import { sendTextMessage } from '@/lib/evolution'
 import { recordMetric } from '@/lib/metrics'
 import { isDeepSeekConfigured, isEvolutionConfigured } from '@/lib/env'
 
+// Extrair número de telefone do JID do WhatsApp
+function extractPhoneNumber(jid: string): string | null {
+  if (!jid) return null
+  
+  // Remover sufixos conhecidos
+  // @s.whatsapp.net - contatos normais
+  // @c.us - formato antigo
+  // @g.us - grupos
+  // @lid - IDs internos (não são números)
+  // @broadcast - listas de transmissão
+  
+  // Se for grupo, broadcast ou lid, retornar null
+  if (jid.includes('@g.us') || jid.includes('@lid') || jid.includes('@broadcast')) {
+    return null
+  }
+  
+  // Extrair apenas os dígitos antes do @
+  const match = jid.match(/^(\d+)@/)
+  if (match) {
+    return match[1]
+  }
+  
+  // Se não tem @, pode ser só o número
+  if (/^\d+$/.test(jid)) {
+    return jid
+  }
+  
+  return null
+}
+
+// Normalizar número para comparação
+function normalizePhoneNumber(phone: string): string {
+  // Remover tudo que não é dígito
+  return phone.replace(/\D/g, '')
+}
+
+// Buscar número autorizado com diferentes formatos
+async function findAuthorizedNumber(instanceId: string, phoneNumber: string) {
+  const normalized = normalizePhoneNumber(phoneNumber)
+  
+  // Buscar exato
+  let authorized = await prisma.authorizedNumber.findFirst({
+    where: {
+      instanceId,
+      isActive: true,
+      phoneNumber: normalized,
+    },
+  })
+  
+  if (authorized) return authorized
+  
+  // Buscar sem código do país (Brasil = 55)
+  if (normalized.startsWith('55') && normalized.length > 10) {
+    const withoutCountry = normalized.substring(2)
+    authorized = await prisma.authorizedNumber.findFirst({
+      where: {
+        instanceId,
+        isActive: true,
+        phoneNumber: withoutCountry,
+      },
+    })
+    if (authorized) return authorized
+  }
+  
+  // Buscar com código do país adicionado
+  if (!normalized.startsWith('55') && normalized.length <= 11) {
+    authorized = await prisma.authorizedNumber.findFirst({
+      where: {
+        instanceId,
+        isActive: true,
+        phoneNumber: `55${normalized}`,
+      },
+    })
+    if (authorized) return authorized
+  }
+  
+  // Buscar números que contenham este número (para casos de formatação diferente)
+  authorized = await prisma.authorizedNumber.findFirst({
+    where: {
+      instanceId,
+      isActive: true,
+      phoneNumber: {
+        endsWith: normalized.slice(-9), // Últimos 9 dígitos
+      },
+    },
+  })
+  
+  return authorized
+}
+
 interface WebhookMessage {
   key: {
     remoteJid: string
@@ -133,11 +223,23 @@ async function handleIncomingMessage(
   // Ignorar mensagens enviadas por nós
   if (fromMe) return
 
-  // Extrair número de telefone
-  const phoneNumber = remoteJid.replace('@s.whatsapp.net', '').replace('@g.us', '')
-
-  // Ignorar grupos por enquanto
+  // Ignorar grupos
   if (remoteJid.includes('@g.us')) return
+  
+  // Ignorar JIDs do tipo @lid (são IDs internos, não números reais)
+  if (remoteJid.includes('@lid')) {
+    console.log('[Webhook] Ignorando JID interno:', remoteJid)
+    return
+  }
+
+  // Extrair número de telefone do JID
+  // Formatos possíveis: 5511999999999@s.whatsapp.net, 5511999999999@c.us
+  const phoneNumber = extractPhoneNumber(remoteJid)
+  
+  if (!phoneNumber) {
+    console.log('[Webhook] Não foi possível extrair número de:', remoteJid)
+    return
+  }
 
   // Extrair conteúdo da mensagem
   const messageContent = data.message.conversation || 
@@ -146,14 +248,10 @@ async function handleIncomingMessage(
 
   if (!messageContent) return
 
-  // Verificar se número está autorizado
-  const authorizedNumber = await prisma.authorizedNumber.findFirst({
-    where: {
-      phoneNumber,
-      instanceId: instance.id,
-      isActive: true,
-    },
-  })
+  console.log('[Webhook] Mensagem recebida de:', phoneNumber, '-', messageContent.substring(0, 50))
+
+  // Verificar se número está autorizado (buscar com diferentes formatos)
+  const authorizedNumber = await findAuthorizedNumber(instance.id, phoneNumber)
 
   // Salvar mensagem recebida
   await prisma.message.create({
@@ -174,6 +272,8 @@ async function handleIncomingMessage(
     console.log('[Webhook] Número não autorizado:', phoneNumber)
     return
   }
+
+  console.log('[Webhook] Número autorizado, gerando resposta...')
 
   // Gerar resposta com IA se configurado
   if (!isDeepSeekConfigured()) {
