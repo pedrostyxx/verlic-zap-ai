@@ -39,7 +39,7 @@ COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 
 # Instalar Prisma CLI para migrations
-RUN npm install -g prisma@7.2.0
+RUN npm install -g prisma@6.9.0
 
 # Copiar script de entrada
 COPY docker-entrypoint.sh ./

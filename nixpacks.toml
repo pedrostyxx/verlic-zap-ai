@@ -1,0 +1,18 @@
+# Nixpacks Configuration for EasyPanel
+# Força Node.js 22 LTS para compatibilidade com Prisma 7
+
+[phases.setup]
+nixPkgs = ["nodejs_22"]
+
+[phases.install]
+cmds = ["npm install --legacy-peer-deps"]
+
+[phases.build]
+cmds = ["npx prisma generate", "npm run build"]
+
+[start]
+cmd = "npm start"
+
+# Forçar versão Node.js 22.12+
+[variables]
+NODE_VERSION = "22"
