@@ -1,4 +1,11 @@
-import { defineConfig, env } from 'prisma/config'
+import { defineConfig } from 'prisma/config'
+
+// Carrega variáveis de ambiente
+const DATABASE_URL = process.env.DATABASE_URL
+
+if (!DATABASE_URL) {
+  console.warn('⚠️  DATABASE_URL não está definida')
+}
 
 export default defineConfig({
   schema: 'prisma/schema.prisma',
@@ -6,6 +13,6 @@ export default defineConfig({
     path: 'prisma/migrations',
   },
   datasource: {
-    url: env('DATABASE_URL')!,
+    url: DATABASE_URL || 'postgresql://localhost:5432/placeholder',
   },
 })
