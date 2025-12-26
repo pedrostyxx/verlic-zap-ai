@@ -1,4 +1,4 @@
-import { defineConfig } from 'prisma/config'
+const { defineConfig } = require('prisma/config')
 
 // Carrega variáveis de ambiente
 const DATABASE_URL = process.env.DATABASE_URL
@@ -7,7 +7,7 @@ if (!DATABASE_URL) {
   console.warn('⚠️  DATABASE_URL não está definida')
 }
 
-export default defineConfig({
+module.exports = defineConfig({
   schema: 'prisma/schema.prisma',
   migrations: {
     path: 'prisma/migrations',
